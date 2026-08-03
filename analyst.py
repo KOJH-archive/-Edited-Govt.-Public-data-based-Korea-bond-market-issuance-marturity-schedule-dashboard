@@ -6,6 +6,7 @@ AI 시황 분석 모듈 (하이브리드: 룰 베이스 + Gemini LLM 연동)
 """
 import os
 import json
+import sqlite3
 import urllib.request
 import urllib.parse
 from db import get_connection, query_settlement_trend
@@ -67,6 +68,7 @@ def call_gemini_llm(prompt, api_key):
 
 def analyze_settlement_trend(conn):
     """기관결제대금 현황에서 시계열 추세를 분석."""
+    conn.row_factory = sqlite3.Row
     rows = query_settlement_trend(conn)
     if len(rows) < 2:
         return []
@@ -103,6 +105,7 @@ def analyze_settlement_trend(conn):
 
 def analyze_local_gov_supply(conn):
     """지방채 발행/상환 현황 분석."""
+    conn.row_factory = sqlite3.Row
     rows = conn.execute("""
         SELECT std_yymm,
                train_bond_new_issu, train_bond_red,
