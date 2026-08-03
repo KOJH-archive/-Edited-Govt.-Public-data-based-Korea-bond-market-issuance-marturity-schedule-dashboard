@@ -4,7 +4,7 @@
 
 ## 1. 시스템 개요 및 기술 스택
 
-본 시스템은 **한국예탁결제원(KSD) 채권정보서비스** 및 **금융위원회 채권발행정보 V2 오픈 API**를 결합 연동하여, 국내 주요 채권(시중은행채, 카드채, 캐피탈채, 국고채 등)의 **2026년 상반기 발행/만기 실데이터 및 2026년 하반기(7~12월) 만기도래 예정액 100% 실데이터**를 자동으로 수집·분류·시각화하고, AI 기반 시황 분석 보고서를 생성하는 데이터 파이프라인 시스템입니다.
+본 시스템은 **한국예탁결제원(KSD) 채권정보서비스** 및 **금융위원회 채권발행정보 V2 오픈 API**를 결합 연동하여, 국내 주요 채권(시중은행채, 카드채, 캐피탈채, 국고채 등)의 **2026년 상반기 발행/만기 실데이터 및 2026년 하반기(7~12월) 만기도래 예정액 100% 실데이터**를 자동으로 수집·분류·시각화하고, **하이브리드 AI(룰 베이스 + Gemini LLM) 기반 시황 분석 보고서**를 생성하는 데이터 파이프라인 시스템입니다.
 
 ### 🛠️ 기술 스택 (Technology Stack)
 - **Core / Runtime**: Python 3.14 (Vanilla Python 중심)
@@ -14,20 +14,20 @@
 - **Sector Classifier**: Regular Expressions (`re` 모듈 정규식 패턴 매핑)
 - **Frontend / Dashboard**: `Streamlit 1.60`
 - **Visualization**: `matplotlib`, `koreanize-matplotlib` (한글 폰트 자동 인코딩)
-- **Automation / AI**: Antigravity 규칙 기반 수급 변동성 분석 엔진 (`analyst.py`)
+- **Automation / AI**: Antigravity 하이브리드 수급 분석 엔진 (`analyst.py` - Rule-based + Gemini LLM)
 
 ---
 
-## 2. API 키 관리 방식 (Single API Key Architecture)
+## 2. API 키 관리 방식 (Single API Key & Gemini LLM)
 
 > [!IMPORTANT]
-> **별도의 `public2.env` 파일이 필요하지 않습니다.**
-> 공공데이터포털(data.go.kr) 회원 계정당 발급되는 **일반 인증키 1개**로 예탁원 API와 금융위원회 API 모두 **동시에 100% 사용 가능**합니다.
-> `.env` 또는 `Public.env` 파일의 `API_KEY` 하나로 두 기관의 공공데이터를 모두 수집합니다.
+> - `API_KEY`: 공공데이터포털(data.go.kr) 일반 인증키 (예탁원 API & 금융위 API 100% 공통 사용)
+> - `GEMINI_API_KEY`: (선택 사항) 입력 시 Gemini 1.5 Flash 지능형 LLM 프리미엄 시황 분석 리포트 자동 생성
 
 ```env
 # Public.env 또는 .env
-API_KEY=15e5470c1c9af84143de1f691a1621d5786beb1fb07f3e3990f912ce044723a9
+API_KEY=YOUR_PUBLIC_DATA_API_KEY_HERE
+GEMINI_API_KEY=YOUR_GEMINI_API_KEY_HERE
 ```
 
 ---
@@ -69,25 +69,22 @@ SECTOR_RULES = [
 
 ---
 
-## 5. SQLite 데이터베이스 수집 현황 (`bond_data.db`)
+## 5. 하이브리드 AI 시황 분석 모듈 (`analyst.py`)
 
-실시간 API를 통해 수집된 DB 레코드 보유 현황 (2009년~2026년 데이터):
-
-- **발행인 마스터 (`issuer_mapping`)**: 144개 실존 발행기관
-- **채권 종목 마스터 (`bond_master`)**: **554개 실존 채권 종목** (발행연도 2009년~2026년 분포)
-- **발행/만기 수급 팩트 (`bond_supply_flow`)**: **1,102건 실데이터**
-  - **2026년 만기도래액**: **367건 (총 90.5조원)** 적재 (상반기 + 하반기 7~12월 전수 포함)
-- **기관결제대금 통계 (`bond_settlement_stat`)**: 43개월치 (2023~2026년)
-- **지방채 발행/상환 통계 (`local_gov_bond_stat`)**: 44개월치 (2023~2026년)
+- **하이브리드 구조**: 외부 의존성 없이 Pure Python `urllib.request`로 Gemini API를 직접 호출.
+- **안전장치**: `GEMINI_API_KEY`가 없더라도 시스템 오류 없이 **기존 룰 베이스 리포트가 100% 정상 작동**.
+- **기능**:
+  - 룰 베이스: 결제대금 전월 대비 ±20% 변동 감지 및 지방채 순발행/순상환 감지
+  - Gemini LLM: 룰 베이스 데이터를 프롬프트로 전달하여 거시경제 맥락 및 차환(Refinancing) 리스크 지능형 리포트 작성
 
 ---
 
 ## 6. Streamlit 웹 대시보드 (`app.py`) 구성
 
-- **🗓️ [상반기 탭]**: 2026년 1~6월 월별 발행액액 및 만기도래액 누적 바 차트
+- **🗓️ [상반기 탭]**: 2026년 1~6월 월별 발행액 및 만기도래액 누적 바 차트
 - **🔮 [하반기 탭]**: 2026년 7~12월 월별 만기도래 예정액 추이 및 섹터별 만기 비중 파이 차트
 - **⚖️ [수급 비교 탭]**: 2026 상반기 발행액 vs 하반기 만기도래 예정액 비교 차트
-- **🤖 [AI 리포트 탭]**: 2026년 시황 변동성 자동 리포트
+- **🤖 [AI 리포트 탭]**: 2026년 하이브리드 AI(룰 베이스 / Gemini LLM) 분석 리포트
 
 ---
 

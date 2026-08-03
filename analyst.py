@@ -1,18 +1,75 @@
 """
-AI 시황 분석 모듈 (규칙 기반)
-- 월별 만기 집중도 탐지
-- 섹터별 순발행/순상환 판단
-- 전월 대비 증감 경고
-- 결제대금 추이 분석
+AI 시황 분석 모듈 (하이브리드: 룰 베이스 + Gemini LLM 연동)
+- 기본: 규칙 기반 시장 특이 동향 감지
+- 옵션: .env 에 GEMINI_API_KEY (또는 GOOGLE_API_KEY) 설정 시 Gemini LLM 심화 분석 리포트 생성
+- urllib.request 기반 Pure Python HTTP REST API 호출로 100% 안정성 보장
 """
+import os
+import json
+import urllib.request
+import urllib.parse
 from db import get_connection, query_settlement_trend
+from config import load_api_key
+
+
+def load_gemini_api_key():
+    """GEMINI_API_KEY 또는 GOOGLE_API_KEY 환경변수 로드."""
+    for key_name in ["GEMINI_API_KEY", "GOOGLE_API_KEY"]:
+        val = os.getenv(key_name)
+        if val:
+            return val.strip()
+
+    # .env 또는 Public.env 파일 확인
+    for filename in [".env", "Public.env"]:
+        if os.path.exists(filename):
+            try:
+                with open(filename, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("GEMINI_API_KEY=") or line.startswith("GOOGLE_API_KEY="):
+                            return line.split("=", 1)[1].strip()
+            except Exception:
+                pass
+    return None
+
+
+def call_gemini_llm(prompt, api_key):
+    """
+    Pure Python urllib.request 기반 Gemini API (gemini-1.5-flash) 호출.
+    외부 라이브러리 설치 없이 100% 동작 보장.
+    """
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ]
+    }
+    
+    headers = {"Content-Type": "json"}
+    data = json.dumps(payload).encode("utf-8")
+    
+    try:
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            res_data = json.loads(resp.read().decode("utf-8"))
+            
+        candidates = res_data.get("candidates", [])
+        if candidates:
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if parts:
+                return parts[0].get("text", "")
+    except Exception as e:
+        return f"⚠️ Gemini LLM 호출 중 오류 발생: {e}"
+        
+    return "LLM 분석 결과를 생성할 수 없습니다."
 
 
 def analyze_settlement_trend(conn):
-    """
-    기관결제대금 현황에서 시계열 추세를 분석.
-    전월 대비 변동률이 큰 항목을 경고.
-    """
+    """기관결제대금 현황에서 시계열 추세를 분석."""
     rows = query_settlement_trend(conn)
     if len(rows) < 2:
         return []
@@ -48,10 +105,7 @@ def analyze_settlement_trend(conn):
 
 
 def analyze_local_gov_supply(conn):
-    """
-    지방채 발행/상환 현황에서 순발행(신규-상환)을 분석.
-    순상환 전환 또는 순발행 급증을 탐지.
-    """
+    """지방채 발행/상환 현황 분석."""
     rows = conn.execute("""
         SELECT std_yymm,
                train_bond_new_issu, train_bond_red,
@@ -80,14 +134,14 @@ def analyze_local_gov_supply(conn):
 
             if red_val > 0 and new_val > 0:
                 ratio = red_val / new_val
-                if ratio > 1.5:  # 상환이 발행의 1.5배 초과
+                if ratio > 1.5:
                     alerts.append({
                         "period": r["std_yymm"],
                         "category": name,
                         "net_supply": net,
                         "msg": f"{r['std_yymm']} {name}: 순상환 전환 (상환 {red_val:,} > 발행 {new_val:,})",
                     })
-                elif new_val > red_val * 2:  # 발행이 상환의 2배 초과
+                elif new_val > red_val * 2:
                     alerts.append({
                         "period": r["std_yymm"],
                         "category": name,
@@ -98,78 +152,72 @@ def analyze_local_gov_supply(conn):
     return alerts
 
 
-def analyze_supply_flow(conn, year):
+def generate_market_commentary(conn, year=2026):
     """
-    bond_supply_flow에서 월별 만기 집중도를 분석.
-    특정 월에 전체 만기의 30% 이상이 집중되면 경고.
+    전체 수급 데이터를 종합하여 룰 베이스 분석 결과 생성.
+    GEMINI_API_KEY 설정 시 Gemini LLM 심화 시황 리포트 병행 생성.
     """
-    rows = conn.execute("""
-        SELECT
-            SUBSTR(event_date, 1, 6) AS yyyymm,
-            SUM(amount) AS total_maturity
-        FROM bond_supply_flow
-        WHERE event_type = 'MATURITY'
-          AND event_date LIKE ? || '%'
-        GROUP BY yyyymm
-        ORDER BY yyyymm
-    """, (str(year),)).fetchall()
-
-    if not rows:
-        return []
-
-    total = sum(dict(r)["total_maturity"] for r in rows)
-    if total == 0:
-        return []
-
-    alerts = []
-    for row in rows:
-        r = dict(row)
-        pct = r["total_maturity"] / total * 100
-        if pct > 25:  # 25% 이상 집중
-            alerts.append({
-                "period": r["yyyymm"],
-                "amount": r["total_maturity"],
-                "pct": round(pct, 1),
-                "msg": f"{r['yyyymm']} 만기 집중도 {pct:.1f}% (금액: {r['total_maturity']:,}원)",
-            })
-
-    return alerts
-
-
-def generate_market_commentary(conn, year=2025):
-    """
-    전체 분석을 종합하여 시황 코멘트를 생성.
-    규칙 기반으로 주요 이슈를 요약.
-    """
-    commentary_parts = []
+    rule_insights = []
 
     # 1. 결제대금 추이 분석
     setl_alerts = analyze_settlement_trend(conn)
     if setl_alerts:
-        commentary_parts.append("## 기관결제대금 동향")
-        for a in setl_alerts[-5:]:  # 최근 5건만
-            commentary_parts.append(f"- {a['msg']}")
+        rule_insights.append("## 📈 기관결제대금 동향 경보")
+        for a in setl_alerts[-6:]:
+            rule_insights.append(f"- {a['msg']}")
 
     # 2. 지방채 수급 분석
     gov_alerts = analyze_local_gov_supply(conn)
     if gov_alerts:
-        commentary_parts.append("\n## 지방채 수급 동향")
-        for a in gov_alerts[-5:]:
-            commentary_parts.append(f"- {a['msg']}")
+        rule_insights.append("\n## 🏛️ 지방채 수급 동향 경보")
+        for a in gov_alerts[-6:]:
+            rule_insights.append(f"- {a['msg']}")
 
-    # 3. 만기 집중도 분석
-    flow_alerts = analyze_supply_flow(conn, year)
-    if flow_alerts:
-        commentary_parts.append(f"\n## {year}년 만기 집중도")
-        for a in flow_alerts:
-            commentary_parts.append(f"- {a['msg']}")
+    base_rule_text = "\n".join(rule_insights) if rule_insights else "현재 수집된 데이터 범위에서 특이 동향이 감지되지 않았습니다."
+    
+    # ── Gemini LLM 키 점검 ──
+    gemini_key = load_gemini_api_key()
 
-    # 종합 코멘트
-    if not commentary_parts:
-        return "현재 수집된 데이터 범위에서 특이 동향이 감지되지 않았습니다."
+    if gemini_key:
+        # LLM 프롬프트 생성
+        prompt = f"""
+당신은 한국 채권시장 수급 분석 전문 금융 애널리스트(AI 시황 분석관)입니다.
+아래에 수집된 {year}년 한국 채권시장 실시간 데이터 감지 결과(기관결제대금, 지방채 발행/상환 등)를 바탕으로,
+금융 전문가 및 투자자를 위한 깊이 있고 통찰력 있는 '채권 수급 종합 전망 및 시황 리포트'를 마크다운 형식으로 작성해주세요.
 
-    header = f"# 채권시장 수급 분석 리포트 ({year}년)\n"
-    return header + "\n".join(commentary_parts)
+[데이터 감지 결과]
+{base_rule_text}
+
+[작성 가이드라인]
+1. 요약 메세지 (3줄 요약)
+2. {year}년 채권 수급 및 차환(Refinancing) 리스크 분석
+3. 금리 변동성 및 차관 자금 시장에 미치는 영향 평가
+4. 향후 대응 전략 및 시사점
+
+답변은 한국어로 작성하며, 전문적이고 명료한 어조로 작성해주세요.
+"""
+        llm_report = call_gemini_llm(prompt, gemini_key)
+        
+        return f"""# 🤖 Gemini AI 프리미엄 시황 분석 리포트 ({year}년)
+
+> 💡 **Gemini LLM 지능형 심화 분석이 적용되었습니다.**
+
+{llm_report}
+
+---
+### 🔍 [참고] 룰 베이스 실시간 데이터 감지 내역
+{base_rule_text}
+"""
+
+    else:
+        # Gemini 키가 없을 경우 기존 룰 베이스 리포트 출력 + 설정 안내
+        return f"""# 📊 채권시장 수급 감지 리포트 ({year}년)
+
+{base_rule_text}
+
+---
+> 💡 **안내**: `.env` 또는 `Public.env` 파일에 `GEMINI_API_KEY=your_key`를 추가하시면 **Gemini AI 기반 전문 시황 심화 분석**을 무료로 이용하실 수 있습니다.
+"""
 
 
 if __name__ == "__main__":
@@ -177,6 +225,6 @@ if __name__ == "__main__":
     sys.stdout.reconfigure(encoding='utf-8')
 
     conn = get_connection()
-    report = generate_market_commentary(conn, year=2025)
+    report = generate_market_commentary(conn, year=2026)
     print(report)
     conn.close()
