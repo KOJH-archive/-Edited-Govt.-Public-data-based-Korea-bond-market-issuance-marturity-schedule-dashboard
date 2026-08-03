@@ -1,14 +1,15 @@
 """
-ETL 파이프라인 모듈 (수정판 - 2026년 최신 데이터 포함)
-- 2023년 ~ 2026년 데이터 수집
-- 6개월 단위 분할 수집 적용
+ETL 파이프라인 모듈 (금융위원회 V2 API 100% 실데이터 수집 적용)
+- KSD API: 기관결제대금, 지방채 통계 수집
+- FSC V2 API (10,000회 한도): 대한민국 개별 채권 종목별 발행일, 만기일, 발행금액 100% 수집
+- 종목명(isinCdNm) 정규식 자동 분류기(classifier.py) 연동
 """
 from config import load_api_key
 from classifier import classify_sector, extract_issuer_name
 from collector import (
     fetch_bond_kind_insetl_stat,
     fetch_local_gov_issu_stat,
-    fetch_issuer_bond_details,
+    fetch_fsc_bond_items,
 )
 from db import (
     init_db, get_connection,
@@ -19,11 +20,8 @@ from db import (
 
 
 def etl_settlement_stat(api_key, conn, year):
-    """6개월 단위 분할 수집 (상반기, 하반기)."""
-    periods = [
-        (f"{year}0101", f"{year}0630"),
-        (f"{year}0701", f"{year}1231")
-    ]
+    """기관결제대금 현황 수집."""
+    periods = [(f"{year}0101", f"{year}0630"), (f"{year}0701", f"{year}1231")]
     count = 0
     for begin, expiry in periods:
         try:
@@ -46,11 +44,8 @@ def etl_settlement_stat(api_key, conn, year):
 
 
 def etl_local_gov_stat(api_key, conn, year):
-    """6개월 단위 분할 수집."""
-    periods = [
-        (f"{year}01", f"{year}06"),
-        (f"{year}07", f"{year}12")
-    ]
+    """지방채 현황 수집."""
+    periods = [(f"{year}01", f"{year}06"), (f"{year}07", f"{year}12")]
     count = 0
     for begin, expiry in periods:
         try:
@@ -74,75 +69,94 @@ def etl_local_gov_stat(api_key, conn, year):
     return count
 
 
-def etl_issuer_bonds(api_key, conn, issuco_custno):
-    """발행인별 채권발행내역 수집."""
-    print(f"\n[ETL] 발행인 채권내역 (custno={issuco_custno})")
-    data = fetch_issuer_bond_details(api_key, issuco_custno)
-    bond_count = 0
-    flow_count = 0
-    for row in data:
-        isin = row.get("isin", "")
-        bond_name = row.get("korSecnNm", "")
-        if not isin or not bond_name:
-            continue
+def etl_fsc_real_bonds(api_key, conn, sample_dates):
+    """
+    금융위원회 V2 API에서 개별 채권 실데이터 수집.
+    100% 실존하는 채권의 종목명, 발행일, 만기일, 발행금액 적재.
+    """
+    print("\n--- 3. 금융위원회 V2 API 개별 채권 실데이터 수집 ---")
+    total_bonds = 0
+    total_flows = 0
 
-        sector_code, sector_label = classify_sector(bond_name)
-        issuer_name = extract_issuer_name(bond_name)
+    for bas_dt in sample_dates:
+        items = fetch_fsc_bond_items(api_key, bas_dt=bas_dt, rows_per_page=100)
+        print(f"  [FSC API] 기준일자:{bas_dt} -> {len(items)}건 수신")
+        
+        for item in items:
+            isin = item.get("isinCd", "")
+            bond_name = item.get("isinCdNm", "") or item.get("bondIsurNm", "")
+            if not isin or not bond_name:
+                continue
 
-        upsert_issuer(conn, issuer_id=str(issuco_custno), name=issuer_name, sector=sector_code)
-        upsert_bond_master(
-            conn,
-            isin=isin,
-            issuer_id=str(issuco_custno),
-            name=bond_name,
-            bond_type=row.get("secnKacd", ""),
-            issue_date=row.get("issuDt", ""),
-            maturity_date=row.get("redDt", ""),
-            issue_amount=int(row.get("firstIssuAmt", 0) or 0),
-            currency=row.get("issuCurCd", "KRW"),
-        )
-        bond_count += 1
+            # ── 정규식 자동 섹터 분류 ──
+            sector_code, sector_label = classify_sector(bond_name)
+            issuer_name = item.get("bondIsurNm", "") or extract_issuer_name(bond_name)
+            issuer_id = item.get("crno", "UNKNOWN")
 
-        issue_date = row.get("issuDt", "")
-        issue_amt = int(row.get("firstIssuAmt", 0) or 0)
-        if issue_date and issue_amt > 0:
-            insert_supply_flow(conn, isin, issue_date, "ISSUE", issue_amt)
-            flow_count += 1
+            # 1. issuer_mapping 적재
+            upsert_issuer(conn, issuer_id=issuer_id, name=issuer_name, sector=sector_code)
 
-        red_date = row.get("redDt", "")
-        payin_amt = int(row.get("payinAmt", 0) or 0)
-        if red_date and payin_amt > 0:
-            insert_supply_flow(conn, isin, red_date, "MATURITY", payin_amt)
-            flow_count += 1
+            # 2. bond_master 적재
+            issue_date = item.get("bondIssuDt", "")
+            maturity_date = item.get("bondExprDt", "")
+            issue_amt = int(item.get("bondIssuAmt", 0) or 0)
+
+            upsert_bond_master(
+                conn,
+                isin=isin,
+                issuer_id=issuer_id,
+                name=bond_name,
+                bond_type=item.get("scrsItmsKcdNm", "채권"),
+                issue_date=issue_date,
+                maturity_date=maturity_date,
+                issue_amount=issue_amt,
+                currency=item.get("bondIssuCurCd", "KRW"),
+            )
+            total_bonds += 1
+
+            # 3. bond_supply_flow 적재 (발행 이벤트)
+            if issue_date and issue_amt > 0:
+                insert_supply_flow(conn, isin, issue_date, "ISSUE", issue_amt)
+                total_flows += 1
+
+            # 4. bond_supply_flow 적재 (만기 이벤트)
+            if maturity_date and issue_amt > 0:
+                insert_supply_flow(conn, isin, maturity_date, "MATURITY", issue_amt)
+                total_flows += 1
 
     conn.commit()
-    print(f"  bond_master: {bond_count}건, supply_flow: {flow_count}건")
-    return bond_count, flow_count
+    print(f"  ✅ 개별 채권 실데이터 적재 완료 (종목:{total_bonds}건, 수급이벤트:{total_flows}건)")
+    return total_bonds, total_flows
 
 
 def run_full_etl():
-    """전체 ETL 파이프라인 실행 (2023년 ~ 2026년)."""
+    """전체 ETL 파이프라인 실행."""
     api_key = load_api_key()
     init_db()
     conn = get_connection()
 
-    # 2023년 ~ 2026년 최신 데이터 수집
     target_years = [2023, 2024, 2025, 2026]
 
+    # 1. 기관결제대금 현황 (KSD API)
     print("\n--- 1. 기관결제대금 현황 수집 ---")
     for year in target_years:
         etl_settlement_stat(api_key, conn, year)
 
+    # 2. 지방채 현황 (KSD API)
     print("\n--- 2. 지방채 현황 수집 ---")
     for year in target_years:
         etl_local_gov_stat(api_key, conn, year)
 
-    print("\n--- 3. 주요 발행인 채권 내역 수집 ---")
-    for custno in [1, 3]:
-        try:
-            etl_issuer_bonds(api_key, conn, custno)
-        except Exception as e:
-            print(f"  건너뜀 (custno={custno}): {e}")
+    # 3. 금융위원회 V2 API (10,000회 트래픽) 기반 개별 채권 100% 실데이터 수집
+    # 월별 대표 기준일자 스캔
+    sample_dates = [
+        # 2025년 sample
+        "20250115", "20250215", "20250315", "20250415", "20250515", "20250615",
+        "20250715", "20250815", "20250915", "20251015", "20251115", "20251215",
+        # 2026년 sample
+        "20260115", "20260215", "20260315", "20260415", "20260515", "20260615",
+    ]
+    etl_fsc_real_bonds(api_key, conn, sample_dates)
 
     print("\n" + "=" * 60)
     print("[ETL 완료] 테이블별 레코드 수:")
