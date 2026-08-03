@@ -1,7 +1,7 @@
 """
 AI 시황 분석 모듈 (하이브리드: 룰 베이스 + Gemini LLM 연동)
 - 기본: 규칙 기반 시장 특이 동향 감지
-- 옵션: .env 에 GEMINI_API_KEY (또는 GOOGLE_API_KEY) 설정 시 Gemini LLM 심화 분석 리포트 생성
+- 옵션: 대시보드 UI 입력 또는 .env 에 GEMINI_API_KEY 설정 시 Gemini LLM 심화 분석 리포트 생성
 - urllib.request 기반 Pure Python HTTP REST API 호출로 100% 안정성 보장
 """
 import os
@@ -9,7 +9,6 @@ import json
 import urllib.request
 import urllib.parse
 from db import get_connection, query_settlement_trend
-from config import load_api_key
 
 
 def load_gemini_api_key():
@@ -19,7 +18,6 @@ def load_gemini_api_key():
         if val:
             return val.strip()
 
-    # .env 또는 Public.env 파일 확인
     for filename in [".env", "Public.env"]:
         if os.path.exists(filename):
             try:
@@ -49,12 +47,11 @@ def call_gemini_llm(prompt, api_key):
         ]
     }
     
-    headers = {"Content-Type": "json"}
     data = json.dumps(payload).encode("utf-8")
     
     try:
         req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=20) as resp:
             res_data = json.loads(resp.read().decode("utf-8"))
             
         candidates = res_data.get("candidates", [])
@@ -63,7 +60,7 @@ def call_gemini_llm(prompt, api_key):
             if parts:
                 return parts[0].get("text", "")
     except Exception as e:
-        return f"⚠️ Gemini LLM 호출 중 오류 발생: {e}"
+        return f"⚠️ Gemini LLM 호출 중 오류가 발생했습니다: {e}"
         
     return "LLM 분석 결과를 생성할 수 없습니다."
 
@@ -152,10 +149,10 @@ def analyze_local_gov_supply(conn):
     return alerts
 
 
-def generate_market_commentary(conn, year=2026):
+def generate_market_commentary(conn, year=2026, user_gemini_key=None):
     """
     전체 수급 데이터를 종합하여 룰 베이스 분석 결과 생성.
-    GEMINI_API_KEY 설정 시 Gemini LLM 심화 시황 리포트 병행 생성.
+    user_gemini_key 입력 또는 파일의 GEMINI_API_KEY 설정 시 Gemini LLM 심화 시황 리포트 병행 생성.
     """
     rule_insights = []
 
@@ -175,11 +172,10 @@ def generate_market_commentary(conn, year=2026):
 
     base_rule_text = "\n".join(rule_insights) if rule_insights else "현재 수집된 데이터 범위에서 특이 동향이 감지되지 않았습니다."
     
-    # ── Gemini LLM 키 점검 ──
-    gemini_key = load_gemini_api_key()
+    # ── Gemini LLM 키 점검 (UI 직접 입력 우선) ──
+    gemini_key = user_gemini_key.strip() if user_gemini_key else load_gemini_api_key()
 
     if gemini_key:
-        # LLM 프롬프트 생성
         prompt = f"""
 당신은 한국 채권시장 수급 분석 전문 금융 애널리스트(AI 시황 분석관)입니다.
 아래에 수집된 {year}년 한국 채권시장 실시간 데이터 감지 결과(기관결제대금, 지방채 발행/상환 등)를 바탕으로,
@@ -189,10 +185,10 @@ def generate_market_commentary(conn, year=2026):
 {base_rule_text}
 
 [작성 가이드라인]
-1. 요약 메세지 (3줄 요약)
-2. {year}년 채권 수급 및 차환(Refinancing) 리스크 분석
-3. 금리 변동성 및 차관 자금 시장에 미치는 영향 평가
-4. 향후 대응 전략 및 시사점
+1. 💡 요약 메세지 (3줄 요약)
+2. 📊 {year}년 채권 수급 및 차환(Refinancing) 리스크 분석
+3. 📉 금리 변동성 및 자금 시장에 미치는 영향 평가
+4. 🚀 향후 대응 전략 및 시사점
 
 답변은 한국어로 작성하며, 전문적이고 명료한 어조로 작성해주세요.
 """
@@ -200,7 +196,7 @@ def generate_market_commentary(conn, year=2026):
         
         return f"""# 🤖 Gemini AI 프리미엄 시황 분석 리포트 ({year}년)
 
-> 💡 **Gemini LLM 지능형 심화 분석이 적용되었습니다.**
+> ✨ **Gemini LLM 지능형 심화 분석이 적용되었습니다.**
 
 {llm_report}
 
@@ -210,13 +206,9 @@ def generate_market_commentary(conn, year=2026):
 """
 
     else:
-        # Gemini 키가 없을 경우 기존 룰 베이스 리포트 출력 + 설정 안내
         return f"""# 📊 채권시장 수급 감지 리포트 ({year}년)
 
 {base_rule_text}
-
----
-> 💡 **안내**: `.env` 또는 `Public.env` 파일에 `GEMINI_API_KEY=your_key`를 추가하시면 **Gemini AI 기반 전문 시황 심화 분석**을 무료로 이용하실 수 있습니다.
 """
 
 

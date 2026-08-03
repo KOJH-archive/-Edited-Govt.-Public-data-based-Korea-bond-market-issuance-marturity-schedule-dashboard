@@ -4,6 +4,7 @@ Streamlit 채권 수급 분석 대시보드 (2026 상반기/하반기 분석 대
   1. 2026년 상반기(1~6월) 채권종류/섹터별 월별 만기도래액 및 발행액 시각화
   2. 2026년 하반기(7~12월) 월별 만기도래예정액 시각화
   3. 상반기 발행 대비 하반기 만기 수급 쏠림 분석
+  4. AI 시황 분석 탭: Gemini API 키 직접 입력 란 포함
 """
 import streamlit as st
 import pandas as pd
@@ -155,7 +156,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "🗓️ [상반기] 1~6월 발행 & 만기 현황",
     "🔮 [하반기] 7~12월 만기도래 예정액",
     "⚖️ 상반기 발행 vs 하반기 만기 비교",
-    "🤖 AI 시황 분석 리포트"
+    "🤖 AI 시황 분석 코멘트"
 ])
 
 # ── TAB 1: 2026 상반기 (1~6월) ──
@@ -165,11 +166,9 @@ with tab1:
     if not h1_df.empty:
         col_left, col_right = st.columns(2)
         
-        # 월별/섹터별 발행액 Pivot
         issue_pivot = h1_df[h1_df['event_type'] == 'ISSUE'].pivot_table(
             index='month_str', columns='sector_name', values='amount_100m', aggfunc='sum', fill_value=0
         )
-        # 월별/섹터별 만기액 Pivot
         mat_pivot = h1_df[h1_df['event_type'] == 'MATURITY'].pivot_table(
             index='month_str', columns='sector_name', values='amount_100m', aggfunc='sum', fill_value=0
         )
@@ -249,7 +248,6 @@ with tab3:
         comp_df = filtered_df.groupby(['sector_name', 'half', 'event_type'])['amount_100m'].sum().unstack(level=[1, 2], fill_value=0)
         st.dataframe(comp_df.style.format("{:,.0f} 억원"))
         
-        # 섹터별 상반기 발행 vs 하반기 만기 바 차트
         h1_iss = filtered_df[(filtered_df['half']=='H1 (상반기)') & (filtered_df['event_type']=='ISSUE')].groupby('sector_name')['amount_100m'].sum()
         h2_mat = filtered_df[(filtered_df['half']=='H2 (하반기)') & (filtered_df['event_type']=='MATURITY')].groupby('sector_name')['amount_100m'].sum()
         
@@ -267,9 +265,28 @@ with tab3:
 
 # ── TAB 4: AI 시황 분석 코멘트 ──
 with tab4:
-    st.subheader("🤖 2026년 AI 채권 수급 분석 리포트")
+    st.subheader("🤖 Antigravity AI 시황 분석 리포트 (2026년)")
+    
+    # ── Gemini API 키 직접 입력란 ──
+    col_input, col_info = st.columns([2, 1])
+    with col_input:
+        user_gemini_key = st.text_input(
+            "🔑 Gemini API Key 입력 (입력 시 LLM 기반 심화 시황 리포트 자동 생성)",
+            type="password",
+            placeholder="AIzaSy... 키 입력 후 Enter",
+            help="Google AI Studio에서 발급받은 Gemini API 키를 입력하시면 대시보드에서 즉시 LLM 심화 분석 리포트가 생성됩니다."
+        )
+    with col_info:
+        st.markdown("""
+        <div style="font-size: 0.85rem; color: #64748B; padding-top: 1.5rem;">
+        * 키 미입력 시 실시간 룰 베이스 경보 리포트가 출력됩니다.
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+
     conn = get_connection()
-    commentary = generate_market_commentary(conn, year=2026)
+    commentary = generate_market_commentary(conn, year=2026, user_gemini_key=user_gemini_key)
     conn.close()
 
     st.markdown(f"""
