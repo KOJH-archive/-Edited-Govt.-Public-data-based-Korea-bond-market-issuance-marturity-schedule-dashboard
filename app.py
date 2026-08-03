@@ -4,7 +4,7 @@ Streamlit 채권 수급 분석 대시보드 (2026 상반기/하반기 분석 대
   1. 2026년 상반기(1~6월) 채권종류/섹터별 월별 만기도래액 및 발행액 시각화
   2. 2026년 하반기(7~12월) 월별 만기도래예정액 시각화
   3. 상반기 발행 대비 하반기 만기 수급 쏠림 분석
-  4. AI 시황 분석 탭: Gemini API 키 직접 입력 란 포함
+  4. AI 시황 분석 탭: 수급 동향 경보 리포트
 """
 import streamlit as st
 import pandas as pd
@@ -266,27 +266,9 @@ with tab3:
 # ── TAB 4: AI 시황 분석 코멘트 ──
 with tab4:
     st.subheader("🤖 Antigravity AI 시황 분석 리포트 (2026년)")
-    
-    # ── Gemini API 키 직접 입력란 ──
-    col_input, col_info = st.columns([2, 1])
-    with col_input:
-        user_gemini_key = st.text_input(
-            "🔑 Gemini API Key 입력 (입력 시 LLM 기반 심화 시황 리포트 자동 생성)",
-            type="password",
-            placeholder="AIzaSy... 키 입력 후 Enter",
-            help="Google AI Studio에서 발급받은 Gemini API 키를 입력하시면 대시보드에서 즉시 LLM 심화 분석 리포트가 생성됩니다."
-        )
-    with col_info:
-        st.markdown("""
-        <div style="font-size: 0.85rem; color: #64748B; padding-top: 1.5rem;">
-        * 키 미입력 시 실시간 룰 베이스 경보 리포트가 출력됩니다.
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("---")
 
     conn = get_connection()
-    commentary = generate_market_commentary(conn, year=2026, user_gemini_key=user_gemini_key)
+    commentary = generate_market_commentary(conn, year=2026)
     conn.close()
 
     st.markdown(f"""
