@@ -189,10 +189,10 @@ with tab1:
         )
         
         with col_chart1:
-            st.markdown("##### 📌 2026년 월별/섹터별 만기돈액 추이 (억원)")
+            st.markdown("##### 📌 2026년 월별/섹터별 만기도래액 추이 (억원)")
             fig, ax = plt.subplots(figsize=(7, 4.2))
             mat_pivot.plot(kind='bar', stacked=True, ax=ax, colormap='tab10')
-            ax.set_title("2026년 월별 채권 만기돈 금액", fontsize=11)
+            ax.set_title("2026년 월별 채권 만기도래 금액", fontsize=11)
             ax.set_xlabel("월 (01월 ~ 현재)")
             ax.set_ylabel("만기액 (억원)")
             ax.legend(title="채권 종류", bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -209,7 +209,7 @@ with tab1:
             plt.tight_layout()
             st.pyplot(fig_pie)
             
-        st.markdown("##### 📋 2026년 월별/섹터별 상세 만기돈 금액 수치 (억원)")
+        st.markdown("##### 📋 2026년 월별/섹터별 상세 만기도래 금액 수치 (억원)")
         st.dataframe(mat_pivot.style.format("{:,.1f}"))
         
         with st.expander("🔍 2026년 만기도래 세부 채권 종목 데이터 개별 조회"):
@@ -297,7 +297,7 @@ with tab3:
                 columns={'issue_amt_억원': '2026년 발행액', 'maturity_amt_억원': '2026년 만기액'}
             )
             plot_df.plot(kind='bar', ax=ax_comp, color=['#2563EB', '#EF4444'], width=0.7)
-            ax_comp.set_title("2026년 섹터별 신규 발행액 vs 만기돈액", fontsize=11)
+            ax_comp.set_title("2026년 섹터별 신규 발행액 vs 만기도래액", fontsize=11)
             ax_comp.set_ylabel("금액 (억원)")
             ax_comp.set_xlabel("섹터")
             plt.xticks(rotation=30, ha='right')
