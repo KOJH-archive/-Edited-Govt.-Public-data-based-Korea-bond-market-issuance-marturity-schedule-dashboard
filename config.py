@@ -58,7 +58,7 @@ ISSUER_MAPPING = {
 
 # 섹터 코드 → 한글 라벨 (주요 발행 주체 세분화)
 SECTOR_LABELS = {
-    "GOV_TREASURY": "국고/지방채",
+    "GOV_TREASURY": "지방채",
     "GOV_HOUSING":  "주택금융/LH채",
     "GOV_KEPCO":    "한전/발전사채",
     "GOV_INFRA":    "도로/가스/인프라채",

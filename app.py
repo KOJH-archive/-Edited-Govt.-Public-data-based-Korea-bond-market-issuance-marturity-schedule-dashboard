@@ -229,41 +229,72 @@ with tab1:
 
 # ── TAB 2: 2022년 ~ 현재 월별 채권종류별 발행액 추이 ──
 with tab2:
-    st.subheader("2022년 ~ 현재 월별 채권종류별 발행액 시각화")
-    st.caption("2022년 1월부터 최근까지 발행된 채권종목 전체를 대상으로 채권종류(섹터)별 월별 발행금액 집계 현황입니다.")
+    st.subheader("월별 채권종류별 발행액 시각화 및 기간 조회")
+    st.caption("2022년 1월부터 최근까지 발행된 채권종목 전체를 대상으로 원하는 기간을 선택하여 월별 발행금액 추이를 조회합니다.")
     
     if not f_issuance.empty:
-        issu_pivot = f_issuance.pivot_table(
+        all_months = sorted(f_issuance['yyyymm'].unique())
+        
+        # 📅 월별 기간 선택 슬라이더
+        if len(all_months) >= 2:
+            default_start_idx = max(0, len(all_months) - 18)  # 기본값: 최근 18개월
+            start_month, end_month = st.select_slider(
+                "📅 조회 기간(년월) 선택",
+                options=all_months,
+                value=(all_months[default_start_idx], all_months[-1]),
+                help="슬라이더 양 끝을 드래그하여 조회할 년월 범위를 지정할 수 있습니다."
+            )
+            df_filtered_issuance = f_issuance[
+                (f_issuance['yyyymm'] >= start_month) & (f_issuance['yyyymm'] <= end_month)
+            ]
+        else:
+            df_filtered_issuance = f_issuance
+        
+        issu_pivot = df_filtered_issuance.pivot_table(
             index='yyyymm', columns='sector_name', values='total_issue_억원', aggfunc='sum', fill_value=0
         )
         
         col_b1, col_b2 = st.columns([3, 2])
         
+        # X축 눈금 표시 간격 자동 계산 (라벨 겹침 방지)
+        num_months = len(issu_pivot)
+        step = max(1, num_months // 15)  # 최대 15개 눈금 표출
+        
         with col_b1:
-            st.markdown("##### 📌 월별/채권종류별 발행액 추이 (억원)")
+            st.markdown(f"##### 📌 월별/채권종류별 발행액 추이 ({start_month} ~ {end_month})")
             fig_bar, ax_bar = plt.subplots(figsize=(8, 4.5))
             issu_pivot.plot(kind='bar', stacked=True, ax=ax_bar, colormap='Set2')
-            ax_bar.set_title("2022년~현재 월별 채권 발행액 (누적 스택)", fontsize=11)
+            ax_bar.set_title(f"월별 채권 발행액 추이 ({start_month} ~ {end_month})", fontsize=11)
             ax_bar.set_xlabel("년월 (YYYYMM)")
             ax_bar.set_ylabel("발행액 (억원)")
             ax_bar.legend(title="채권 종류", bbox_to_anchor=(1.05, 1), loc='upper left')
-            plt.xticks(rotation=45)
+            
+            # X축 눈금 겹침 방지
+            ticks = list(range(0, num_months, step))
+            labels = [issu_pivot.index[i] for i in ticks]
+            ax_bar.set_xticks(ticks)
+            ax_bar.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
+            
             plt.tight_layout()
             st.pyplot(fig_bar)
             
         with col_b2:
-            st.markdown("##### 📌 채권종류별 월별 발행액 추이 (선 그래프)")
+            st.markdown(f"##### 📌 채권종류별 월별 발행액 추이 (선 그래프)")
             fig_line, ax_line = plt.subplots(figsize=(6, 4.5))
             issu_pivot.plot(kind='line', marker='o', ax=ax_line)
             ax_line.set_title("채권종류별 발행 추이", fontsize=11)
             ax_line.set_xlabel("년월")
             ax_line.set_ylabel("발행액 (억원)")
             ax_line.legend(title="채권 종류", bbox_to_anchor=(1.05, 1), loc='upper left')
-            plt.xticks(rotation=45)
+            
+            # X축 눈금 겹침 방지
+            ax_line.set_xticks(ticks)
+            ax_line.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
+            
             plt.tight_layout()
             st.pyplot(fig_line)
             
-        st.markdown("##### 📋 2022년~현재 월별/채권종류별 발행액 피벗 수치 (억원)")
+        st.markdown(f"##### 📋 월별/채권종류별 상세 발행액 피벗 수치 ({start_month} ~ {end_month})")
         st.dataframe(issu_pivot.style.format("{:,.1f}"))
     else:
         st.info("2022년 이후 발행 데이터가 존재하지 않습니다.")
@@ -339,7 +370,7 @@ with tab3:
 
 
 
-# ── TAB 4: AI 시황 분석 리포트 (기존 UI 유지) ──
+# ── TAB 4: AI 시황 분석 리포트 ──
 with tab4:
     st.subheader("🤖 Antigravity AI 시황 분석 리포트")
 

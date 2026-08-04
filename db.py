@@ -105,14 +105,14 @@ def init_db(db_path=None):
 # INSERT / UPSERT 함수
 # ──────────────────────────────────────────────
 def upsert_issuer(conn, issuer_id, name, sector, rating=None):
-    """발행인 매핑 UPSERT."""
+    """발행인 매핑 UPSERT. 유효한 섹터 분류가 존재하는 경우 OTHER로 덮어쓰지 않음."""
     conn.execute("""
         INSERT INTO issuer_mapping (issuer_id, issuer_name, sector_code, credit_rating)
         VALUES (?, ?, ?, ?)
         ON CONFLICT(issuer_id) DO UPDATE SET
-            issuer_name=excluded.issuer_name,
-            sector_code=excluded.sector_code,
-            credit_rating=excluded.credit_rating,
+            issuer_name=CASE WHEN excluded.issuer_name != '' THEN excluded.issuer_name ELSE issuer_mapping.issuer_name END,
+            sector_code=CASE WHEN excluded.sector_code != 'OTHER' THEN excluded.sector_code ELSE issuer_mapping.sector_code END,
+            credit_rating=COALESCE(excluded.credit_rating, issuer_mapping.credit_rating),
             last_updated=CURRENT_TIMESTAMP
     """, (str(issuer_id), name, sector, rating))
 
