@@ -56,12 +56,17 @@ ISSUER_MAPPING = {
     "00000001": {"name": "대한민국(국고채)", "sector": "GOV",   "rating": "AAA"},
 }
 
-# 섹터 코드 → 한글 라벨
+# 섹터 코드 → 한글 라벨 (주요 발행 주체 세분화)
 SECTOR_LABELS = {
-    "BANK":    "시중은행채",
-    "SBANK":   "특수은행채",
-    "CARD":    "신용카드채",
-    "CAPITAL": "캐피탈채",
-    "GOV":     "국고채/공공채",
-    "OTHER":   "기타",
+    "GOV_TREASURY": "국고/지방채",
+    "GOV_HOUSING":  "주택금융/LH채",
+    "GOV_KEPCO":    "한전/발전사채",
+    "GOV_INFRA":    "도로/가스/인프라채",
+    "GOV_POLICY":   "기타 공공기관채",
+    "BANK":         "시중은행/증권채",
+    "SBANK":        "특수/국책은행채",
+    "CARD":         "신용카드채",
+    "CAPITAL":      "캐피탈/여전채",
+    "OTHER":        "기타 회사채",
 }
+

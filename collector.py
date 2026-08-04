@@ -29,7 +29,7 @@ def _call_ksd_api(operation, api_key, params, max_retries=2):
             break
         except Exception as e:
             if attempt < max_retries:
-                time.sleep(1)
+                time.sleep(1.5 * (attempt + 1))
                 continue
             raise RuntimeError(f"KSD API 호출 실패 ({operation}): {e}")
 
@@ -90,11 +90,15 @@ def fetch_local_gov_issu_stat(api_key, begin_ym, expiry_ym):
 # ──────────────────────────────────────────────
 # 금융위원회 V2 API (10,000회 트래픽) 수집 엔진
 # ──────────────────────────────────────────────
-def fetch_fsc_bond_items(api_key, bas_dt=None, rows_per_page=100):
+def fetch_fsc_bond_items_all(api_key, bas_dt=None, rows_per_page=1000):
     """
-    금융위원회 채권발행정보 V2 API (/getIssuIssuItemStat_V2) 호출.
-    대한민국 모든 개별 채권의 종목명, 발행일, 만기일, 발행금액 100% 수집.
+    금융위원회 채권발행정보 V2 API (/getIssuIssuItemStat_V2) 전수 페이징 수집.
+    totalCount 전체 페이지를 순회하여 등록된 대한민국 모든 채권 종목을 수집.
     """
+    all_items = []
+    page = 1
+    
+    # 1페이지 호출하여 totalCount 파악
     params = {
         "serviceKey": api_key,
         "resultType": "json",
@@ -113,10 +117,40 @@ def fetch_fsc_bond_items(api_key, bas_dt=None, rows_per_page=100):
             data = json.loads(resp.read().decode("utf-8"))
         
         body = data.get("response", {}).get("body", {})
-        items = body.get("items", {}).get("item", [])
-        if isinstance(items, dict):
-            items = [items]
-        return items
+        total_count = int(body.get("totalCount", 0))
+        first_items = body.get("items", {}).get("item", [])
+        if isinstance(first_items, dict):
+            first_items = [first_items]
+        
+        all_items.extend(first_items)
+        
+        if total_count > 0:
+            total_pages = (total_count + rows_per_page - 1) // rows_per_page
+            print(f"  [FSC API] 총 {total_count}건 등록 확인 ({total_pages}개 페이지 전수 수집 시작)")
+            
+            for p in range(2, total_pages + 1):
+                params["pageNo"] = str(p)
+                qs_p = urllib.parse.urlencode(params)
+                url_p = f"{FSC_BASE_URL}/getIssuIssuItemStat_V2?{qs_p}"
+                
+                try:
+                    req_p = urllib.request.Request(url_p)
+                    with urllib.request.urlopen(req_p, timeout=30) as resp_p:
+                        data_p = json.loads(resp_p.read().decode("utf-8"))
+                    
+                    items_p = data_p.get("response", {}).get("body", {}).get("items", {}).get("item", [])
+                    if isinstance(items_p, dict):
+                        items_p = [items_p]
+                    all_items.extend(items_p)
+                    if p % 5 == 0 or p == total_pages:
+                        print(f"    - 페이지 {p}/{total_pages} 수집 완료 (누적 {len(all_items)}건)")
+                    time.sleep(0.1)
+                except Exception as ep:
+                    print(f"    ⚠️ 페이지 {p} 수집 에러: {ep}")
+                    time.sleep(0.5)
+
     except Exception as e:
         print(f"⚠️ FSC API 수집 실패 (basDt={bas_dt}): {e}")
-        return []
+        
+    return all_items
+

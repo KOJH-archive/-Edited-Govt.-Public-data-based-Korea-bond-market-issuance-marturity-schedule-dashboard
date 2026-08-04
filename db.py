@@ -68,10 +68,18 @@ CREATE TABLE IF NOT EXISTS local_gov_bond_stat (
     created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ETL 수집 메타데이터 (증분 수집 워터마크 관리)
+CREATE TABLE IF NOT EXISTS etl_metadata (
+    meta_key    TEXT PRIMARY KEY,
+    meta_val    TEXT NOT NULL,
+    updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- 중복 방지 인덱스
 CREATE UNIQUE INDEX IF NOT EXISTS idx_supply_flow_unique
     ON bond_supply_flow (isin_code, event_date, event_type);
 """
+
 
 
 def get_connection(db_path=None):
@@ -170,6 +178,24 @@ def upsert_local_gov_stat(conn, std_yymm, train_red, train_new,
     """, (std_yymm, train_red, train_new, rd_red, rd_new, gen_red, gen_new))
 
 
+def get_meta_value(conn, key):
+    """ETL 수집 메타데이터(마지막 완료일자 등) 조회."""
+    row = conn.execute("SELECT meta_val FROM etl_metadata WHERE meta_key = ?", (key,)).fetchone()
+    return row[0] if row else None
+
+
+def set_meta_value(conn, key, val):
+    """ETL 수집 메타데이터 저장/갱신."""
+    conn.execute("""
+        INSERT INTO etl_metadata (meta_key, meta_val, updated_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(meta_key) DO UPDATE SET
+            meta_val = excluded.meta_val,
+            updated_at = CURRENT_TIMESTAMP
+    """, (key, str(val)))
+
+
+
 # ──────────────────────────────────────────────
 # 분석용 쿼리 함수
 # ──────────────────────────────────────────────
@@ -225,6 +251,68 @@ def query_settlement_trend(conn):
     return conn.execute(sql).fetchall()
 
 
+def query_2026_matured_bonds_to_date(conn, end_date="20261231"):
+    """
+    2026년 1월 ~ 현재(end_date)까지 만기도래한 채권 데이터 조회 (정규식 분류 섹터 적용).
+    """
+    sql = """
+    SELECT
+        bm.isin_code,
+        bm.bond_name,
+        COALESCE(im.sector_code, 'OTHER') AS sector_code,
+        bm.issue_date,
+        bm.maturity_date,
+        SUBSTR(bm.maturity_date, 1, 6) AS yyyymm,
+        SUBSTR(bm.maturity_date, 5, 2) AS month_str,
+        bm.issue_amount AS issue_amount_raw,    -- 원(KRW) 단위 raw
+        im.issuer_name
+    FROM bond_master bm
+    LEFT JOIN issuer_mapping im ON bm.issuer_id = im.issuer_id
+    WHERE bm.maturity_date >= '20260101' AND bm.maturity_date <= ?
+    ORDER BY bm.maturity_date ASC
+    """
+    return conn.execute(sql, (end_date,)).fetchall()
+
+
+def query_monthly_issuance_since_2022(conn):
+    """
+    2022년 1월 ~ 현재까지 월별 채권종류(섹터)별 발행액 집계.
+    """
+    sql = """
+    SELECT
+        SUBSTR(bm.issue_date, 1, 6) AS yyyymm,
+        COALESCE(im.sector_code, 'OTHER') AS sector_code,
+        SUM(bm.issue_amount) AS total_issue_raw,          -- 원(KRW) 단위 raw
+        COUNT(*) AS bond_count
+    FROM bond_master bm
+    LEFT JOIN issuer_mapping im ON bm.issuer_id = im.issuer_id
+    WHERE bm.issue_date >= '20220101' AND bm.issue_date != ''
+    GROUP BY yyyymm, sector_code
+    ORDER BY yyyymm ASC, sector_code ASC
+    """
+    return conn.execute(sql).fetchall()
+
+
+def query_2026_issuance_vs_maturity_by_sector(conn):
+    """
+    2026년 동일 연도 내 섹터별 발행액 vs 만기액 집계 (차환율 및 수급 밸런스 분석용).
+    """
+    sql = """
+    SELECT
+        COALESCE(im.sector_code, 'OTHER') AS sector_code,
+        SUM(CASE WHEN bm.issue_date >= '20260101' AND bm.issue_date <= '20261231' THEN bm.issue_amount ELSE 0 END) AS issue_amt_raw,      -- 원(KRW) 단위 raw
+        SUM(CASE WHEN bm.maturity_date >= '20260101' AND bm.maturity_date <= '20261231' THEN bm.issue_amount ELSE 0 END) AS maturity_amt_raw  -- 원(KRW) 단위 raw
+    FROM bond_master bm
+    LEFT JOIN issuer_mapping im ON bm.issuer_id = im.issuer_id
+    WHERE (bm.issue_date >= '20260101' AND bm.issue_date <= '20261231')
+       OR (bm.maturity_date >= '20260101' AND bm.maturity_date <= '20261231')
+    GROUP BY sector_code
+    ORDER BY maturity_amt_raw DESC
+    """
+    return conn.execute(sql).fetchall()
+
+
+
 def query_table_counts(conn):
     """각 테이블의 레코드 수 조회 (검증용)."""
     tables = ["issuer_mapping", "bond_master", "bond_supply_flow",
@@ -234,6 +322,7 @@ def query_table_counts(conn):
         row = conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()
         counts[t] = row[0]
     return counts
+
 
 
 # ──────────────────────────────────────────────
