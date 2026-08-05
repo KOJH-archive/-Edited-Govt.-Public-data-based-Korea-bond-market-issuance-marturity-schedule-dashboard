@@ -100,10 +100,12 @@ def etl_fsc_incremental_sync(api_key, conn, force_full=False):
         if not isin or not bond_name:
             continue
 
-        # ── 정규식 자동 섹터 분류 ──
-        sector_code, sector_label = classify_sector(bond_name)
+        bond_type_raw = item.get("scrsItmsKcdNm", "")
         issuer_name = item.get("bondIsurNm", "") or extract_issuer_name(bond_name)
         issuer_id = item.get("crno", "UNKNOWN")
+
+        # ── 하이브리드 자동 섹터 분류 (1차 API 원본 + 2차 키워드 정밀화) ──
+        sector_code, sector_label = classify_sector(bond_name, bond_type=bond_type_raw, issuer_name=issuer_name)
 
         # 1. issuer_mapping 적재
         upsert_issuer(conn, issuer_id=issuer_id, name=issuer_name, sector=sector_code)
