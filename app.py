@@ -188,6 +188,12 @@ with tab1:
             index='month_str', columns='sector_name', values='amount_억원', aggfunc='sum', fill_value=0
         )
         
+        # 정확한 수치 확인을 위한 합계 포함 피벗 테이블 생성
+        mat_pivot_display = mat_pivot.copy()
+        mat_pivot_display['월별 합계'] = mat_pivot_display.sum(axis=1)
+        mat_pivot_display.loc['총계'] = mat_pivot_display.sum(axis=0)
+        mat_pivot_display.index.name = '만기년월'
+        
         with col_chart1:
             st.markdown("##### 📌 2026년 월별/섹터별 만기도래액 추이 (억원)")
             fig, ax = plt.subplots(figsize=(7, 4.2))
@@ -200,6 +206,9 @@ with tab1:
             plt.tight_layout()
             st.pyplot(fig)
             
+            st.markdown("##### 📊 2026년 월별/섹터별 만기도래액 수치 표 (억원)")
+            st.dataframe(mat_pivot_display.style.format("{:,.1f}"), use_container_width=True)
+            
         with col_chart2:
             st.markdown("##### 📌 2026년 채권종류별 만기 비중")
             sector_sums = f_matured.groupby('sector_name')['amount_억원'].sum()
@@ -209,8 +218,8 @@ with tab1:
             plt.tight_layout()
             st.pyplot(fig_pie)
             
-        st.markdown("##### 📋 2026년 월별/섹터별 상세 만기도래 금액 수치 (억원)")
-        st.dataframe(mat_pivot.style.format("{:,.1f}"))
+        st.markdown("##### 📋 2026년 월별/섹터별 상세 만기도래 금액 수치 (합계 포함, 억원)")
+        st.dataframe(mat_pivot_display.style.format("{:,.1f}"), use_container_width=True)
         
         with st.expander("🔍 2026년 만기도래 세부 채권 종목 데이터 개별 조회"):
             show_cols = ['isin_code', 'bond_name', 'sector_name', 'issuer_name', 'issue_date', 'maturity_date', 'amount_억원']
