@@ -2,14 +2,36 @@
 금융위원회_채권발행정보 V2 API 탐색 스크립트
 10,000회 트래픽 지원
 """
+import os
 import urllib.request
 import urllib.parse
 import json
 import sys
 
+
 sys.stdout.reconfigure(encoding='utf-8')
 
-KEY = open("Public.env").read().strip()
+
+def load_api_key(env_paths=("Public.env", ".env")):
+    for env_path in env_paths:
+        if not os.path.exists(env_path):
+            continue
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                if key.strip().upper() in {"PUBLIC_DATA_API_KEY", "API_KEY", "SERVICE_KEY"}:
+                    return val.strip()
+        return None
+    return os.environ.get("PUBLIC_DATA_API_KEY") or os.environ.get("API_KEY") or os.environ.get("SERVICE_KEY")
+
+
+KEY = load_api_key()
+if not KEY:
+    raise RuntimeError("API 키를 .env / Public.env / 환경변수에서 찾지 못했습니다.")
+
 BASE = "https://apis.data.go.kr/1160100/GetBondTradInfoService_V2"
 
 def test_endpoint(op, params):
@@ -25,7 +47,7 @@ def test_endpoint(op, params):
         items = body.get("items", {}).get("item", [])
         if isinstance(items, dict):
             items = [items]
-        
+
         print(f"[{op:25s}] code={header.get('resultCode')} msg={header.get('resultMsg')} total={total} items={len(items)}")
         if items:
             print(f"  SAMPLE ITEM: {json.dumps(items[0], ensure_ascii=False)}")
