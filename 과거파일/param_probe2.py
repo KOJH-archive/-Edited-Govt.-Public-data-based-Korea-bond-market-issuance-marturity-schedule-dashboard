@@ -8,15 +8,35 @@
 - 좀 더 다양한 이름 조합 시도
 - getRgtXrcInfo, getPrinFixInfoSchSvc, getBondErlyRedInfo도 테스트
 """
+import os
 import urllib.request
 import urllib.parse
 import xml.etree.ElementTree as ET
 
-API_KEY = open("Public.env").read().strip()
+
+def load_api_key(env_paths=("Public.env", ".env")):
+    for env_path in env_paths:
+        if not os.path.exists(env_path):
+            continue
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                if key.strip().upper() in {"PUBLIC_DATA_API_KEY", "API_KEY", "SERVICE_KEY"}:
+                    return val.strip()
+        return None
+    return os.environ.get("PUBLIC_DATA_API_KEY") or os.environ.get("API_KEY") or os.environ.get("SERVICE_KEY")
+
+
+API_KEY = load_api_key()
 BASE = "https://apis.data.go.kr/B552481/BondSvc"
 
+if not API_KEY:
+    raise RuntimeError("API 키를 .env / Public.env / 환경변수에서 찾지 못했습니다.")
+
 test_cases = [
-    # getBondKindInsetlStat - 추가 변형
     ("/getBondKindInsetlStat", {"baseYm": "202501"}),
     ("/getBondKindInsetlStat", {"baseYymm": "202501"}),
     ("/getBondKindInsetlStat", {"baseMm": "202501"}),
@@ -30,28 +50,24 @@ test_cases = [
     ("/getBondKindInsetlStat", {"BasDt": "20250101"}),
     ("/getBondKindInsetlStat", {"BasYm": "202501"}),
     ("/getBondKindInsetlStat", {"BAS_DT": "20250101"}),
-    
-    # getlocalgovernmentIssuStat - 추가 변형
+
     ("/getlocalgovernmentIssuStat", {"baseYm": "202501"}),
     ("/getlocalgovernmentIssuStat", {"stdrYm": "202501"}),
     ("/getlocalgovernmentIssuStat", {"stdrYymm": "202501"}),
     ("/getlocalgovernmentIssuStat", {"crtrYm": "202501"}),
     ("/getlocalgovernmentIssuStat", {"bgnYm": "202501", "endYm": "202506"}),
     ("/getlocalgovernmentIssuStat", {"bgnDt": "20250101", "endDt": "20250630"}),
-    
-    # getRgtXrcInfo
+
     ("/getRgtXrcInfo", {"schStdYy": "2024"}),
     ("/getRgtXrcInfo", {"baseYy": "2024"}),
     ("/getRgtXrcInfo", {"basYy": "2024"}),
     ("/getRgtXrcInfo", {"stdrYy": "2024"}),
     ("/getRgtXrcInfo", {"yyyy": "2024"}),
-    
-    # getPrinFixInfoSchSvc - 다양한 조합
+
     ("/getPrinFixInfoSchSvc", {"isin": "KR6150331F58"}),
     ("/getPrinFixInfoSchSvc", {"isinCd": "KR6150331F58"}),
     ("/getPrinFixInfoSchSvc", {"basDt": "20250101"}),
-    
-    # getBondErlyRedInfo
+
     ("/getBondErlyRedInfo", {"isin": "KR6150331F58"}),
     ("/getBondErlyRedInfo", {"isinCd": "KR6150331F58"}),
     ("/getBondErlyRedInfo", {"basDt": "20250101"}),
@@ -74,7 +90,6 @@ for op, params in test_cases:
         if code == "00" and items:
             fields = [child.tag for child in items[0]]
             print(f"           | FIELDS: {fields}")
-            # 첫 번째 item의 값도 출력
             for child in items[0]:
                 print(f"           |   {child.tag} = {child.text}")
     except Exception as e:
